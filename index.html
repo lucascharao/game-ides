@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IDE Kombat: Neon Arena</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="screen is-active" id="selectScreen" aria-label="Selecao de personagem">
+        <div class="brand">
+          <span class="brand__kicker">One Stage Fighter</span>
+          <h1>IDE Kombat</h1>
+          <p>Escolha seu lutador e entre na arena orbital.</p>
+        </div>
+
+        <div class="panel controls-panel" aria-label="Comandos do teclado">
+          <div class="controls-panel__title">
+            <strong>Comandos</strong>
+            <span>Clique em um personagem ou pressione Enter para iniciar.</span>
+          </div>
+          <div class="command-grid">
+            <div class="command">
+              <kbd>A</kbd><kbd>D</kbd>
+              <span>Andar</span>
+            </div>
+            <div class="command">
+              <kbd>W</kbd>
+              <span>Pular</span>
+            </div>
+            <div class="command">
+              <kbd>S</kbd>
+              <span>Defender</span>
+            </div>
+            <div class="command">
+              <kbd>J</kbd>
+              <span>Soco</span>
+            </div>
+            <div class="command">
+              <kbd>K</kbd>
+              <span>Chute</span>
+            </div>
+            <div class="command">
+              <kbd>L</kbd>
+              <span>Especial</span>
+            </div>
+            <div class="command">
+              <kbd>←</kbd><kbd>→</kbd>
+              <span>Selecionar</span>
+            </div>
+            <div class="command">
+              <kbd>Enter</kbd>
+              <span>Começar</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="roster" id="roster"></div>
+      </section>
+
+      <section class="screen game-screen" id="gameScreen" aria-label="Arena de luta">
+        <div class="hud">
+          <div class="fighter-card fighter-card--left">
+            <img id="leftPortrait" alt="" />
+            <div>
+              <span id="leftName">PLAYER</span>
+              <div class="meter"><i id="leftHealth"></i></div>
+            </div>
+          </div>
+          <div class="round-box">
+            <span id="roundState">READY</span>
+            <strong id="timer">90</strong>
+          </div>
+          <div class="fighter-card fighter-card--right">
+            <div>
+              <span id="rightName">CPU</span>
+              <div class="meter"><i id="rightHealth"></i></div>
+            </div>
+            <img id="rightPortrait" alt="" />
+          </div>
+        </div>
+
+        <canvas id="gameCanvas" width="1280" height="720"></canvas>
+
+        <div class="end-overlay" id="endOverlay" aria-live="polite">
+          <span id="endKicker">Resultado</span>
+          <strong id="endTitle">Vitória</strong>
+          <button type="button" id="endRestartButton">Reiniciar luta</button>
+        </div>
+
+        <div class="touchbar" aria-label="Controles touch">
+          <button type="button" data-touch="left">◀</button>
+          <button type="button" data-touch="right">▶</button>
+          <button type="button" data-touch="jump">▲</button>
+          <button type="button" data-touch="block">◆</button>
+          <button type="button" data-touch="punch">P</button>
+          <button type="button" data-touch="kick">K</button>
+          <button type="button" data-touch="special">S</button>
+        </div>
+
+        <div class="panel game-actions">
+          <button type="button" id="restartButton">Reiniciar</button>
+          <button type="button" id="soundButton">Som: On</button>
+          <button type="button" id="fullscreenButton">Tela Cheia</button>
+          <button type="button" id="selectButton">Personagens</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="game.js"></script>
+  </body>
+</html>

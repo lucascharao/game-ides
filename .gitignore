@@ -1,0 +1,9 @@
+.DS_Store
+*.pyc
+__pycache__/
+.playwright-mcp/
+ide-kombat-sfx-check.png
+canvas-data-url.txt
+game-transparent.png
+select-screen*.png
+start-controls.png
