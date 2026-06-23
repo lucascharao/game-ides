@@ -16,6 +16,9 @@ const restartButton = document.querySelector("#restartButton");
 const selectButton = document.querySelector("#selectButton");
 const soundButton = document.querySelector("#soundButton");
 const fullscreenButton = document.querySelector("#fullscreenButton");
+const inviteCodeInput = document.querySelector("#inviteCodeInput");
+const joinMultiplayerButton = document.querySelector("#joinMultiplayerButton");
+const multiplayerStatus = document.querySelector("#multiplayerStatus");
 const endOverlay = document.querySelector("#endOverlay");
 const endKicker = document.querySelector("#endKicker");
 const endTitle = document.querySelector("#endTitle");
@@ -96,6 +99,8 @@ const touchMap = {
   special: "l",
 };
 
+const multiplayerParams = new URLSearchParams(window.location.search);
+const multiplayerServerUrl = multiplayerParams.get("server") || window.localStorage.getItem("multiplayerServerUrl") || window.location.origin;
 const loadedImages = new Map();
 const sfxFiles = {
   start: "audio/sfx/start.mp3",
@@ -132,6 +137,30 @@ let announcerText = "";
 let audioContext = null;
 let audioBus = null;
 let soundEnabled = true;
+let network = {
+  mode: "local",
+  code: "",
+  playerId: multiplayerParams.get("player") || window.localStorage.getItem("multiplayerPlayerId") || "",
+  slot: null,
+  room: null,
+  eventSource: null,
+  remoteKeys: new Set(),
+  lastInputSent: "",
+  lastSnapshotAt: 0,
+  lastRemoteHealth: {
+    player: MAX_HEALTH,
+    cpu: MAX_HEALTH,
+  },
+};
+
+if (!network.playerId && window.crypto?.randomUUID) {
+  network.playerId = window.crypto.randomUUID();
+  window.localStorage.setItem("multiplayerPlayerId", network.playerId);
+}
+if (!network.playerId) {
+  network.playerId = `player-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  window.localStorage.setItem("multiplayerPlayerId", network.playerId);
+}
 
 loadImage("arena-background.png").then((image) => {
   arenaBackground = image;
@@ -409,6 +438,10 @@ function renderRoster() {
       playSfx("select");
       selectedIndex = index;
       renderRoster();
+      if (cleanInviteCode(inviteCodeInput.value)) {
+        setMultiplayerStatus(`${character.name} selecionado`);
+        return;
+      }
       startMatch();
     });
     roster.appendChild(button);
@@ -597,12 +630,127 @@ function setEndOverlay(visible, title = "", kicker = "Resultado") {
   endTitle.textContent = title;
 }
 
-async function startMatch() {
+function setMultiplayerStatus(text) {
+  multiplayerStatus.textContent = text;
+}
+
+function cleanInviteCode(value) {
+  return String(value || "").replace(/[^a-z0-9]/gi, "").toUpperCase().slice(0, 12);
+}
+
+function getCharacterById(id) {
+  return characters.find((character) => character.id === id) || characters[0];
+}
+
+function realtimeUrl(path) {
+  return new URL(path, multiplayerServerUrl).toString();
+}
+
+async function postRealtime(path, body) {
+  const response = await fetch(realtimeUrl(path), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+function roomPlayers() {
+  return network.room?.players || [];
+}
+
+function peerPlayer() {
+  return roomPlayers().find((player) => player.playerId !== network.playerId) || null;
+}
+
+function localSlotPlayer(slot = network.slot) {
+  return roomPlayers().find((player) => player.slot === slot) || null;
+}
+
+function normalizeInputKeys(values) {
+  return new Set(Array.isArray(values) ? values.filter((key) => touchMap[key] || ["a", "d", "w", "s", "j", "k", "l"].includes(key)) : []);
+}
+
+function sendLocalInput() {
+  if (network.mode === "local" || !network.code) return;
+  const serialized = JSON.stringify([...keys].sort());
+  if (serialized === network.lastInputSent) return;
+  network.lastInputSent = serialized;
+  postRealtime("/api/input", {
+    code: network.code,
+    playerId: network.playerId,
+    keys: [...keys],
+  }).catch(() => setMultiplayerStatus("Conexao instavel"));
+}
+
+function openRoomEvents() {
+  if (network.eventSource) network.eventSource.close();
+  const eventsUrl = new URL(realtimeUrl("/api/events"));
+  eventsUrl.searchParams.set("code", network.code);
+  eventsUrl.searchParams.set("playerId", network.playerId);
+  network.eventSource = new EventSource(eventsUrl.toString());
+  network.eventSource.addEventListener("room", (event) => {
+    network.room = JSON.parse(event.data);
+    const peer = peerPlayer();
+    setMultiplayerStatus(peer?.connected ? "Adversario conectado" : "Aguardando adversario");
+    if (network.mode === "host" && peer?.connected && !match) startMultiplayerHostMatch();
+  });
+  network.eventSource.addEventListener("input", (event) => {
+    const data = JSON.parse(event.data);
+    if (data.playerId === network.playerId) return;
+    network.remoteKeys = normalizeInputKeys(data.keys);
+  });
+  network.eventSource.addEventListener("snapshot", (event) => {
+    if (network.mode !== "guest") return;
+    applyNetworkSnapshot(JSON.parse(event.data));
+  });
+  network.eventSource.addEventListener("restart", () => {
+    if (network.mode === "guest") {
+      match = null;
+      setEndOverlay(false);
+      announcerUntil = 0;
+    }
+  });
+  network.eventSource.onerror = () => {
+    if (network.mode !== "local") setMultiplayerStatus("Reconectando");
+  };
+}
+
+async function joinMultiplayer() {
+  const code = cleanInviteCode(inviteCodeInput.value);
+  if (!code) {
+    setMultiplayerStatus("Informe o convite");
+    return;
+  }
+  getAudioContext();
+  setMultiplayerStatus("Conectando");
+  try {
+    const joined = await postRealtime("/api/join", {
+      code,
+      playerId: network.playerId,
+      characterId: characters[selectedIndex].id,
+    });
+    network.code = code;
+    network.slot = joined.slot;
+    network.room = joined.room;
+    network.mode = joined.slot === 1 ? "host" : "guest";
+    window.localStorage.setItem("multiplayerServerUrl", multiplayerServerUrl);
+    openRoomEvents();
+    const peer = peerPlayer();
+    setMultiplayerStatus(peer?.connected ? "Adversario conectado" : "Aguardando adversario");
+    if (network.mode === "host" && peer?.connected) startMultiplayerHostMatch();
+  } catch (error) {
+    setMultiplayerStatus(error instanceof Error ? error.message : "Falha ao conectar");
+  }
+}
+
+async function createMatch(playerCharacter, cpuCharacter) {
   getAudioContext();
   playSfx("start");
-  const cpuIndex = chooseCpu(selectedIndex);
-  const playerCharacter = characters[selectedIndex];
-  const cpuCharacter = characters[cpuIndex];
   const [playerImage, cpuImage, playerOutcomeImage, cpuOutcomeImage] = await Promise.all([
     loadImage(playerCharacter.sprite),
     loadImage(cpuCharacter.sprite),
@@ -646,10 +794,33 @@ async function startMatch() {
   setScreen("game");
 }
 
+async function startMatch() {
+  network.mode = "local";
+  const cpuIndex = chooseCpu(selectedIndex);
+  return createMatch(characters[selectedIndex], characters[cpuIndex]);
+}
+
+async function startMultiplayerHostMatch() {
+  const leftPlayer = localSlotPlayer(1);
+  const rightPlayer = localSlotPlayer(2);
+  if (!leftPlayer || !rightPlayer) return;
+  await createMatch(getCharacterById(leftPlayer.characterId), getCharacterById(rightPlayer.characterId));
+  announce("MULTIPLAYER", 1.2);
+  sendSnapshot(true);
+}
+
 function restartMatch() {
   setEndOverlay(false);
   announcerUntil = 0;
   keys.clear();
+  if (network.mode === "host") {
+    postRealtime("/api/restart", { code: network.code, playerId: network.playerId }).catch(() => {});
+    return startMultiplayerHostMatch();
+  }
+  if (network.mode === "guest") {
+    setMultiplayerStatus("Host controla reinicio");
+    return null;
+  }
   if (!match) return startMatch();
   return startMatch();
 }
@@ -659,6 +830,19 @@ function goToSelect() {
   keys.clear();
   announcerUntil = 0;
   setEndOverlay(false);
+  if (network.eventSource) network.eventSource.close();
+  network = {
+    ...network,
+    mode: "local",
+    code: "",
+    slot: null,
+    room: null,
+    eventSource: null,
+    remoteKeys: new Set(),
+    lastInputSent: "",
+    lastSnapshotAt: 0,
+  };
+  setMultiplayerStatus("");
   setScreen("select");
 }
 
@@ -682,12 +866,12 @@ function setAction(fighter, state, duration) {
   if (state === "punch" || state === "kick" || state === "special") playSfx(state);
 }
 
-function applyInput(fighter, opponent, dt) {
+function applyInputFromKeys(fighter, opponent, dt, inputKeys) {
   if (!canAct(fighter)) return;
 
-  const left = keys.has("a");
-  const right = keys.has("d");
-  const block = keys.has("s");
+  const left = inputKeys.has("a");
+  const right = inputKeys.has("d");
+  const block = inputKeys.has("s");
 
   fighter.vx = 0;
   fighter.blocking = block && isGrounded(fighter);
@@ -700,18 +884,18 @@ function applyInput(fighter, opponent, dt) {
 
   if (left) fighter.vx -= WALK_SPEED;
   if (right) fighter.vx += WALK_SPEED;
-  if (keys.has("w") && isGrounded(fighter)) {
+  if (inputKeys.has("w") && isGrounded(fighter)) {
     fighter.vy = JUMP_VELOCITY;
     playSfx("jump");
   }
 
-  if (keys.has("j") && fighter.cooldowns.punch <= 0) {
+  if (inputKeys.has("j") && fighter.cooldowns.punch <= 0) {
     fighter.cooldowns.punch = 0.55;
     setAction(fighter, "punch", 0.3);
-  } else if (keys.has("k") && fighter.cooldowns.kick <= 0) {
+  } else if (inputKeys.has("k") && fighter.cooldowns.kick <= 0) {
     fighter.cooldowns.kick = 0.85;
     setAction(fighter, "kick", 0.46);
-  } else if (keys.has("l") && fighter.cooldowns.special <= 0 && fighter.energy >= 35) {
+  } else if (inputKeys.has("l") && fighter.cooldowns.special <= 0 && fighter.energy >= 35) {
     fighter.energy -= 35;
     fighter.cooldowns.special = 6;
     setAction(fighter, "special", 0.78);
@@ -720,6 +904,10 @@ function applyInput(fighter, opponent, dt) {
   } else {
     fighter.state = Math.abs(fighter.vx) > 0 ? "walk" : "idle";
   }
+}
+
+function applyInput(fighter, opponent, dt) {
+  applyInputFromKeys(fighter, opponent, dt, keys);
 }
 
 function applyAi(fighter, opponent, dt) {
@@ -937,11 +1125,130 @@ function updateParticles(dt) {
   });
 }
 
+function serializeFighter(fighter) {
+  return {
+    characterId: fighter.character.id,
+    x: fighter.x,
+    y: fighter.y,
+    vx: fighter.vx,
+    vy: fighter.vy,
+    width: fighter.width,
+    height: fighter.height,
+    facing: fighter.facing,
+    health: fighter.health,
+    energy: fighter.energy,
+    state: fighter.state,
+    actionTime: fighter.actionTime,
+    actionDuration: fighter.actionDuration,
+    attackActive: fighter.attackActive,
+    hurtFlash: fighter.hurtFlash,
+    blocking: fighter.blocking,
+    cooldowns: fighter.cooldowns,
+  };
+}
+
+function serializeMatch() {
+  if (!match) return null;
+  return {
+    room: network.room,
+    time: match.time,
+    state: match.state,
+    stateTime: match.stateTime,
+    overTime: match.overTime,
+    resultRevealAt: match.resultRevealAt,
+    resultAnnounced: match.resultAnnounced,
+    winnerSlot: match.winner === match.player ? 1 : match.winner === match.cpu ? 2 : null,
+    announcerText,
+    announcerUntil,
+    cameraShake: match.cameraShake,
+    particles: match.particles,
+    impacts: match.impacts,
+    player: serializeFighter(match.player),
+    cpu: serializeFighter(match.cpu),
+  };
+}
+
+function applyFighterSnapshot(fighter, data) {
+  Object.assign(fighter, {
+    x: data.x,
+    y: data.y,
+    vx: data.vx,
+    vy: data.vy,
+    width: data.width,
+    height: data.height,
+    facing: data.facing,
+    health: data.health,
+    energy: data.energy,
+    state: data.state,
+    actionTime: data.actionTime,
+    actionDuration: data.actionDuration,
+    attackActive: data.attackActive,
+    hurtFlash: data.hurtFlash,
+    blocking: data.blocking,
+    cooldowns: data.cooldowns,
+  });
+}
+
+async function ensureSnapshotMatch(snapshot) {
+  if (match && match.player.character.id === snapshot.player.characterId && match.cpu.character.id === snapshot.cpu.characterId) return;
+  await createMatch(getCharacterById(snapshot.player.characterId), getCharacterById(snapshot.cpu.characterId));
+  keys.clear();
+}
+
+async function applyNetworkSnapshot(snapshot) {
+  network.room = snapshot.room || network.room;
+  await ensureSnapshotMatch(snapshot);
+  const previousHealth = network.lastRemoteHealth;
+  match.time = snapshot.time;
+  match.state = snapshot.state;
+  match.stateTime = snapshot.stateTime;
+  match.overTime = snapshot.overTime;
+  match.resultRevealAt = snapshot.resultRevealAt;
+  match.resultAnnounced = snapshot.resultAnnounced;
+  match.cameraShake = snapshot.cameraShake;
+  match.particles = snapshot.particles || [];
+  match.impacts = snapshot.impacts || [];
+  match.winner = snapshot.winnerSlot === 1 ? match.player : snapshot.winnerSlot === 2 ? match.cpu : null;
+  announcerText = snapshot.announcerText;
+  announcerUntil = snapshot.announcerUntil;
+  applyFighterSnapshot(match.player, snapshot.player);
+  applyFighterSnapshot(match.cpu, snapshot.cpu);
+  timerNode.textContent = String(Math.ceil(match.time));
+  roundState.textContent = match.state === "fight" ? "FIGHT" : match.state === "over" ? "KO" : "READY";
+  if (snapshot.player.health < previousHealth.player || snapshot.cpu.health < previousHealth.cpu) playSfx("hit");
+  if (snapshot.state === "over" && previousHealth.player > 0 && (snapshot.player.health <= 0 || snapshot.cpu.health <= 0)) playSfx("ko");
+  network.lastRemoteHealth = {
+    player: snapshot.player.health,
+    cpu: snapshot.cpu.health,
+  };
+  updateHud();
+  if (match.state === "over" && match.resultAnnounced && match.winner) {
+    setEndOverlay(true, `${match.winner.character.name} venceu`, "Fim da luta");
+  }
+}
+
+function sendSnapshot(force = false) {
+  if (network.mode !== "host" || !network.code || !match) return;
+  const now = performance.now();
+  if (!force && now - network.lastSnapshotAt < 50) return;
+  network.lastSnapshotAt = now;
+  postRealtime("/api/snapshot", {
+    code: network.code,
+    playerId: network.playerId,
+    snapshot: serializeMatch(),
+  }).catch(() => setMultiplayerStatus("Conexao instavel"));
+}
+
 function updateMatch(dt) {
   if (!match) return;
 
   match.cameraShake = Math.max(0, match.cameraShake - 42 * dt);
   announcerUntil = Math.max(0, announcerUntil - dt);
+
+  if (network.mode === "guest") {
+    updateHud();
+    return;
+  }
 
   if (match.state === "intro") {
     match.stateTime -= dt;
@@ -954,8 +1261,13 @@ function updateMatch(dt) {
   } else if (match.state === "fight") {
     match.time = Math.max(0, match.time - dt);
     timerNode.textContent = String(Math.ceil(match.time));
-    applyInput(match.player, match.cpu, dt);
-    applyAi(match.cpu, match.player, dt);
+    if (network.mode === "host") {
+      applyInputFromKeys(match.player, match.cpu, dt, keys);
+      applyInputFromKeys(match.cpu, match.player, dt, network.remoteKeys);
+    } else {
+      applyInput(match.player, match.cpu, dt);
+      applyAi(match.cpu, match.player, dt);
+    }
     resolveFighterCollision(match.player, match.cpu);
     if (match.time <= 0) {
       const winner = match.player.health >= match.cpu.health ? match.player : match.cpu;
@@ -977,6 +1289,7 @@ function updateMatch(dt) {
   resolveAttack(match.cpu, match.player);
   updateParticles(dt);
   updateHud();
+  sendSnapshot();
 }
 
 function updateHud() {
@@ -1154,16 +1467,24 @@ function loop(time) {
 
 document.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
+  if (event.target === inviteCodeInput) return;
   getAudioContext();
   if (key === "enter" && match?.state === "over") {
     event.preventDefault();
     restartMatch();
     return;
   }
-  if (key === "enter" && !match) startMatch();
+  if (key === "enter" && !match) {
+    if (cleanInviteCode(inviteCodeInput.value)) {
+      joinMultiplayer();
+    } else {
+      startMatch();
+    }
+  }
   if (["a", "d", "w", "s", "j", "k", "l"].includes(key)) {
     event.preventDefault();
     keys.add(key);
+    sendLocalInput();
   }
   if (key === "arrowleft") selectedIndex = (selectedIndex + characters.length - 1) % characters.length;
   if (key === "arrowright") selectedIndex = (selectedIndex + 1) % characters.length;
@@ -1175,12 +1496,19 @@ document.addEventListener("keydown", (event) => {
 
 document.addEventListener("keyup", (event) => {
   keys.delete(event.key.toLowerCase());
+  sendLocalInput();
 });
 
 document.querySelectorAll("[data-touch]").forEach((button) => {
   const key = touchMap[button.dataset.touch];
-  const hold = () => keys.add(key);
-  const release = () => keys.delete(key);
+  const hold = () => {
+    keys.add(key);
+    sendLocalInput();
+  };
+  const release = () => {
+    keys.delete(key);
+    sendLocalInput();
+  };
   button.addEventListener("pointerdown", hold);
   button.addEventListener("pointerup", release);
   button.addEventListener("pointercancel", release);
@@ -1190,6 +1518,17 @@ document.querySelectorAll("[data-touch]").forEach((button) => {
 restartButton.addEventListener("click", restartMatch);
 endRestartButton.addEventListener("click", restartMatch);
 selectButton.addEventListener("click", goToSelect);
+joinMultiplayerButton.addEventListener("click", joinMultiplayer);
+inviteCodeInput.addEventListener("input", () => {
+  inviteCodeInput.value = cleanInviteCode(inviteCodeInput.value);
+});
+inviteCodeInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    event.stopPropagation();
+    joinMultiplayer();
+  }
+});
 soundButton.addEventListener("click", () => {
   soundEnabled = !soundEnabled;
   soundButton.textContent = soundEnabled ? "Som: On" : "Som: Off";
@@ -1208,6 +1547,11 @@ fullscreenButton.addEventListener("click", () => {
 });
 
 renderRoster();
+const invitedCode = cleanInviteCode(multiplayerParams.get("invite") || multiplayerParams.get("code"));
+if (invitedCode) {
+  inviteCodeInput.value = invitedCode;
+  setMultiplayerStatus("Convite carregado");
+}
 Promise.all(characters.flatMap((character) => [loadImage(character.portrait), loadImage(character.sprite)])).then(() => {
   requestAnimationFrame(loop);
 });

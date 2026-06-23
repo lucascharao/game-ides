@@ -58,6 +58,13 @@
         </div>
 
         <div class="roster" id="roster"></div>
+
+        <div class="panel multiplayer-panel" aria-label="Multiplayer por convite">
+          <label for="inviteCodeInput">Convite</label>
+          <input id="inviteCodeInput" type="text" autocomplete="off" spellcheck="false" maxlength="12" placeholder="CODIGO" />
+          <button type="button" id="joinMultiplayerButton">Entrar multiplayer</button>
+          <span id="multiplayerStatus" aria-live="polite"></span>
+        </div>
       </section>
 
       <section class="screen game-screen" id="gameScreen" aria-label="Arena de luta">

@@ -109,6 +109,70 @@ h1 {
   gap: 14px;
 }
 
+.multiplayer-panel {
+  display: grid;
+  grid-template-columns: auto minmax(140px, 220px) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+}
+
+.multiplayer-panel label {
+  color: var(--gold);
+  font-size: 1.05rem;
+  text-transform: uppercase;
+}
+
+.multiplayer-panel input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(242, 184, 75, 0.48);
+  border-radius: 6px;
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.3);
+  font: 800 1rem "Trebuchet MS", Verdana, sans-serif;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0 12px;
+  outline: none;
+}
+
+.multiplayer-panel input:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(242, 184, 75, 0.16);
+}
+
+.multiplayer-panel button,
+.game-actions button,
+.end-overlay button {
+  border: 1px solid rgba(242, 184, 75, 0.55);
+  border-radius: 6px;
+  color: var(--bg);
+  background: var(--gold);
+  cursor: pointer;
+  transition: filter 160ms ease, transform 160ms ease;
+}
+
+.multiplayer-panel button {
+  min-height: 42px;
+  padding: 0 14px;
+  text-transform: uppercase;
+}
+
+.multiplayer-panel button:hover,
+.game-actions button:hover,
+.end-overlay button:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+#multiplayerStatus {
+  min-height: 22px;
+  color: var(--muted);
+  font: 700 0.84rem "Trebuchet MS", Verdana, sans-serif;
+  text-transform: uppercase;
+}
+
 .character {
   position: relative;
   min-height: clamp(270px, 36vh, 390px);
@@ -466,6 +530,15 @@ canvas {
 
   .controls-panel {
     grid-template-columns: 1fr;
+  }
+
+  .multiplayer-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .multiplayer-panel button,
+  .multiplayer-panel input {
+    width: 100%;
   }
 
   .command-grid {
